@@ -284,6 +284,19 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
             self.replayLastActivationIfRecent()
             result(true)
             break
+        case "updateCallerName":
+            // SnowChat fork (2026-11-23) — the app names the caller on a call
+            // that is already on screen (the PushKit report is anonymous; the
+            // app learns the caller only after it decrypts the invite).
+            guard let args = call.arguments as? [String: Any],
+                  let callId = args["id"] as? String,
+                  let name = args["nameCaller"] as? String else {
+                result(true)
+                return
+            }
+            self.updateCallerName(callId, name: name)
+            result(true)
+            break
         case "replayLastAcceptIfRecent":
             // Phase 8.2 v2.2 — Same shape as activation replay, but for the
             // CXAnswerCallAction event. CallKit dispatches the answer action
@@ -414,6 +427,26 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
         self.callManager.startCall(data)
     }
     
+    /// SnowChat fork (2026-11-23) — change the caller name CallKit shows for a
+    /// call this provider reported (incoming or outgoing), ringing or ongoing.
+    ///
+    /// Only `localizedCallerName` is set on the update: CXCallUpdate leaves
+    /// every property it was not given unchanged, so the remote handle stays
+    /// the one reported with the call (generic, no account id). Ids that are
+    /// not UUID-shaped, and calls this provider does not hold, are ignored —
+    /// UUID(uuidString:) is never force-unwrapped here. Nothing is logged:
+    /// neither the name nor the id.
+    @objc public func updateCallerName(_ callId: String, name: String) {
+        guard !name.isEmpty,
+              let uuid = UUID(uuidString: callId),
+              self.callManager.callWithUUID(uuid: uuid) != nil else {
+            return
+        }
+        let update = CXCallUpdate()
+        update.localizedCallerName = name
+        self.sharedProvider?.reportCall(with: uuid, updated: update)
+    }
+
     @objc public func muteCall(_ callId: String, isMuted: Bool) {
         guard let callId = UUID(uuidString: callId),
               let call = self.callManager.callWithUUID(uuid: callId) else {
@@ -568,6 +601,12 @@ public class SwiftFlutterCallkitIncomingPlugin: NSObject, FlutterPlugin, CXProvi
         return typeDefault
     }
     
+    // The CXProvider — and so its configuration — is created once, from the
+    // Data of the first call that reaches this point (a PushKit report on a
+    // cold launch, else the first Dart showCallkitIncoming / startCall).
+    // Every SnowChat path passes includesCallsInRecents=false and Data
+    // defaults it to false, so whichever call comes first, no call is written
+    // to the Phone app's Recents (SnowChat core/call/CLAUDE.md §7.1).
     func initCallkitProvider(_ data: Data) {
         if(self.sharedProvider == nil){
             self.sharedProvider = CXProvider(configuration: createConfiguration(data))

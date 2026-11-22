@@ -175,7 +175,37 @@ class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityA
         )
     }
 
+    /**
+     * SnowChat fork (2026-11-23) — name the caller of a call that is already
+     * raised (or about to be: the incoming broadcast may still be in flight).
+     * The name goes to [CallerDisplayNames] (memory only), then to whatever is
+     * on screen for [id]: the self-managed Telecom Connection's caller display
+     * name and the incoming / ongoing notification. The full-screen incoming
+     * screen redraws itself through its CallerDisplayNames listener. Nothing
+     * is logged.
+     */
+    fun updateCallerName(id: String, name: String) {
+        if (id.isEmpty() || name.isEmpty()) return
+        CallerDisplayNames.set(id, name)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            CallkitConnection.find(id)?.setCallerDisplayName(
+                name,
+                android.telecom.TelecomManager.PRESENTATION_ALLOWED,
+            )
+        }
+        callkitNotificationManager?.refreshCallerName(id)
+    }
+
+    /** SnowChat fork (2026-11-23) — drop the name of a call that ended. */
+    fun forgetCallerName(id: String) {
+        if (id.isEmpty()) return
+        CallerDisplayNames.remove(id)
+        callkitNotificationManager?.forgetCall(id)
+    }
+
     public fun endAllCalls() {
+        CallerDisplayNames.clear()
+        callkitNotificationManager?.forgetAllCalls()
         val calls = getDataActiveCalls(context)
         calls.forEach {
             context?.sendBroadcast(
@@ -272,9 +302,20 @@ class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityA
                     result.success(true)
                 }
 
+                "updateCallerName" -> {
+                    val id = call.argument<String>("id") ?: ""
+                    val name = call.argument<String>("nameCaller") ?: ""
+                    updateCallerName(id, name)
+                    result.success(true)
+                }
+
                 "endCall" -> {
                     val calls = getDataActiveCalls(context)
                     val data = Data(call.arguments() ?: HashMap())
+                    // SnowChat fork (2026-11-23): the app ends every id it ever
+                    // named (call ids and push nonces) — drop the name even when
+                    // no stored call matches the id.
+                    forgetCallerName(data.id)
                     val currentCall = calls.firstOrNull { it.id == data.id }
                     if (currentCall != null && context != null) {
                         if(currentCall.isAccepted) {
@@ -312,6 +353,8 @@ class FlutterCallkitIncomingPlugin : FlutterPlugin, MethodCallHandler, ActivityA
                 }
 
                 "endAllCalls" -> {
+                    CallerDisplayNames.clear()
+                    callkitNotificationManager?.forgetAllCalls()
                     val calls = getDataActiveCalls(context)
                     calls.forEach {
                         if (it.isAccepted) {

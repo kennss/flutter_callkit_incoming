@@ -235,6 +235,7 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
                     Log.d(TAG, "[DIAG-DECLINE] sendEventFlutter id=${parsedForLog.id}")
                     sendEventFlutter(CallkitConstants.ACTION_CALL_DECLINE, data)
                     removeCall(context, Data.fromBundle(data))
+                    forgetCallerName(data)
 
                     // [SnowChat fork 2026-05-05 H-fix verification window]
                     //
@@ -266,6 +267,7 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
                     CallkitNotificationService.stopService(context)
                     sendEventFlutter(CallkitConstants.ACTION_CALL_ENDED, data)
                     removeCall(context, Data.fromBundle(data))
+                    forgetCallerName(data)
                 } catch (error: Exception) {
                     Log.e(TAG, null, error)
                 }
@@ -280,6 +282,7 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
                     notificationManager?.showMissCallNotification(data)
                     sendEventFlutter(CallkitConstants.ACTION_CALL_TIMEOUT, data)
                     removeCall(context, Data.fromBundle(data))
+                    forgetCallerName(data)
                 } catch (error: Exception) {
                     Log.e(TAG, null, error)
                 }
@@ -308,6 +311,17 @@ class CallkitIncomingBroadcastReceiver : BroadcastReceiver() {
                 }
             }
         }
+    }
+
+    /**
+     * SnowChat fork (2026-11-23) — the call ended: drop the name the app gave
+     * it (CallerDisplayNames, memory only) and its notification tracking.
+     */
+    private fun forgetCallerName(data: Bundle) {
+        val id = data.getString(CallkitConstants.EXTRA_CALLKIT_ID, "") ?: ""
+        if (id.isEmpty()) return
+        CallerDisplayNames.remove(id)
+        getCallkitNotificationManager()?.forgetCall(id)
     }
 
     private fun sendEventFlutter(event: String, data: Bundle) {

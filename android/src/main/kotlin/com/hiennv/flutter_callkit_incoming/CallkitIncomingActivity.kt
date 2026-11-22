@@ -62,6 +62,17 @@ class CallkitIncomingActivity : Activity() {
 
     private var endedCallkitIncomingBroadcastReceiver = EndedCallkitIncomingBroadcastReceiver()
 
+    // SnowChat fork (2026-11-23) — the call this screen shows, and the
+    // in-process listener that redraws the caller name when the app names the
+    // call (CallerDisplayNames, fed by updateCallerName). In-process on
+    // purpose: an implicit broadcast would hand the name to other apps.
+    private var shownCallId: String = ""
+    private val callerNameListener: (String) -> Unit = { callId ->
+        if (callId == shownCallId && !isFinishing) {
+            CallerDisplayNames.get(callId)?.let { tvNameCaller.text = it }
+        }
+    }
+
     private lateinit var ivBackground: ImageView
     private lateinit var llBackgroundAnimation: RippleRelativeLayout
 
@@ -104,6 +115,7 @@ class CallkitIncomingActivity : Activity() {
         setContentView(R.layout.activity_callkit_incoming)
         initView()
         incomingData(intent)
+        CallerDisplayNames.addListener(callerNameListener)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
                 endedCallkitIncomingBroadcastReceiver,
@@ -178,7 +190,8 @@ class CallkitIncomingActivity : Activity() {
 
         val textColor = data?.getString(CallkitConstants.EXTRA_CALLKIT_TEXT_COLOR, "#ffffff")
         val isShowCallID = data?.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_SHOW_CALL_ID, false)
-        tvNameCaller.text = data?.getString(CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, "")
+        shownCallId = data?.getString(CallkitConstants.EXTRA_CALLKIT_ID, "") ?: ""
+        tvNameCaller.text = CallerDisplayNames.resolve(data)
         tvNumber.text = data?.getString(CallkitConstants.EXTRA_CALLKIT_HANDLE, "")
         tvNumber.visibility = if (isShowCallID == true) View.VISIBLE else View.INVISIBLE
 
@@ -361,6 +374,7 @@ class CallkitIncomingActivity : Activity() {
     }
 
     override fun onDestroy() {
+        CallerDisplayNames.removeListener(callerNameListener)
         unregisterReceiver(endedCallkitIncomingBroadcastReceiver)
         super.onDestroy()
     }

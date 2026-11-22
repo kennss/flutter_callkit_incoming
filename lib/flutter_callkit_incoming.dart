@@ -91,6 +91,20 @@ class FlutterCallkitIncoming {
     await _channel.invokeMethod("endCall", {'id': id});
   }
 
+  /// Change the caller name the system call UI shows for the call [id],
+  /// ringing or ongoing (SnowChat fork, 2026-11-23).
+  /// On iOS: a CXCallUpdate with only localizedCallerName set — the remote
+  /// handle stays the one reported with the call. Non-UUID ids and calls the
+  /// provider does not hold are ignored.
+  /// On Android: the self-managed Telecom Connection's caller display name,
+  /// the incoming / ongoing call notification and the full-screen incoming
+  /// screen. The name is kept in memory only (never in the plugin's stored
+  /// call list) and dropped when the call ends.
+  static Future updateCallerName(String id, String nameCaller) async {
+    await _channel.invokeMethod(
+        "updateCallerName", {'id': id, 'nameCaller': nameCaller});
+  }
+
   /// Set call has been connected successfully.
   /// On iOS, using Callkit(update a history into the Phone app).
   /// On Android, Nothing(only callback event listener).

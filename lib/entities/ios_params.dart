@@ -23,6 +23,10 @@ class IOSParams {
   final bool? supportsGrouping;
   final bool? supportsUngrouping;
 
+  /// Whether CallKit writes the calls to the Phone app's Recents. The native
+  /// side defaults to false when this is null (SnowChat fork, 2026-11-23).
+  final bool? includesCallsInRecents;
+
   /// Add file to root project xcode /ios/Runner/Ringtone.caf and Copy Bundle Resources(Build Phases) -> value: "Ringtone.caf"
   final String? ringtonePath;
 
@@ -41,6 +45,7 @@ class IOSParams {
     this.supportsHolding,
     this.supportsGrouping,
     this.supportsUngrouping,
+    this.includesCallsInRecents,
     this.ringtonePath,
   });
 

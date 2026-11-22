@@ -56,11 +56,16 @@ class CallkitConnectionService : ConnectionService() {
             return failed("Empty call id")
         }
 
-        Log.d(TAG, "onCreateIncomingConnection id=$callId caller=${data.nameCaller}")
+        // SnowChat fork (2026-11-23): no caller name in the log.
+        Log.d(TAG, "onCreateIncomingConnection id=$callId")
 
         val connection = CallkitConnection(callId, callBundle).apply {
-            if (data.nameCaller.isNotEmpty()) {
-                setCallerDisplayName(data.nameCaller, TelecomManager.PRESENTATION_ALLOWED)
+            // The name the app gave the call (updateCallerName) wins over the
+            // anonymous one in the bundle — the update may land before Telecom
+            // asks for this Connection.
+            val callerName = CallerDisplayNames.resolve(callBundle)
+            if (callerName.isNotEmpty()) {
+                setCallerDisplayName(callerName, TelecomManager.PRESENTATION_ALLOWED)
             }
             val handle = data.handle.ifEmpty { callId }
             setAddress(
@@ -96,11 +101,13 @@ class CallkitConnectionService : ConnectionService() {
             return failed("Empty call id")
         }
 
-        Log.d(TAG, "onCreateOutgoingConnection id=$callId callee=${data.nameCaller}")
+        // SnowChat fork (2026-11-23): no callee name in the log.
+        Log.d(TAG, "onCreateOutgoingConnection id=$callId")
 
         val connection = CallkitConnection(callId, callBundle).apply {
-            if (data.nameCaller.isNotEmpty()) {
-                setCallerDisplayName(data.nameCaller, TelecomManager.PRESENTATION_ALLOWED)
+            val calleeName = CallerDisplayNames.resolve(callBundle)
+            if (calleeName.isNotEmpty()) {
+                setCallerDisplayName(calleeName, TelecomManager.PRESENTATION_ALLOWED)
             }
             val handle = data.handle.ifEmpty { callId }
             setAddress(

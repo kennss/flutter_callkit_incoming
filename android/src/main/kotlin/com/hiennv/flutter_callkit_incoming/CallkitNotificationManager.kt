@@ -39,6 +39,10 @@ class CallkitNotificationManager(
 
         const val EXTRA_TIME_START_CALL = "EXTRA_TIME_START_CALL"
 
+        // SnowChat fork (2026-11-23): when the ongoing call notification first
+        // showed the call as connected — a redraw keeps its chronometer.
+        const val EXTRA_TIME_CONNECTED_CALL = "EXTRA_TIME_CONNECTED_CALL"
+
         const val NOTIFICATION_CHANNEL_ID_INCOMING = "callkit_incoming_channel_id"
         const val NOTIFICATION_CHANNEL_ID_ONGOING = "callkit_ongoing_channel_id"
         const val NOTIFICATION_CHANNEL_ID_MISSED = "callkit_missed_channel_id"
@@ -68,6 +72,13 @@ class CallkitNotificationManager(
 
     private var targetOnGoingAvatarDefault: SafeTarget? = null
     private var targetOnGoingAvatarCustom: SafeTarget? = null
+
+    // SnowChat fork (2026-11-23) — the bundles of the incoming and ongoing
+    // call notifications now on screen, so refreshCallerName can redraw them
+    // with the name the app gave the call (CallerDisplayNames).
+    private var shownIncomingData: Bundle? = null
+    private var shownOngoingData: Bundle? = null
+    private var shownOngoingConnected: Boolean? = null
 
 
     @SuppressLint("MissingPermission")
@@ -165,7 +176,19 @@ class CallkitNotificationManager(
 
     @SuppressLint("MissingPermission")
     fun getIncomingNotification(data: Bundle): CallkitNotification? {
-        data.putLong(EXTRA_TIME_START_CALL, System.currentTimeMillis())
+        // SnowChat fork (2026-11-23): a redraw (refreshCallerName) keeps the
+        // time the call started ringing, so the ring timeout is not restarted.
+        val now = System.currentTimeMillis()
+        if (!data.containsKey(EXTRA_TIME_START_CALL)) {
+            data.putLong(EXTRA_TIME_START_CALL, now)
+        }
+        val startedAt = data.getLong(EXTRA_TIME_START_CALL, now)
+        val ringDuration = data.getLong(CallkitConstants.EXTRA_CALLKIT_DURATION, 0L)
+        val ringRemaining = if (ringDuration > 0L) {
+            maxOf(1L, ringDuration - (now - startedAt))
+        } else {
+            0L
+        }
 
         val notificationId =
             data.getString(CallkitConstants.EXTRA_CALLKIT_ID, "callkit_incoming").hashCode()
@@ -181,12 +204,8 @@ class CallkitNotificationManager(
         notificationBuilder?.setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
         notificationBuilder?.setOngoing(true)
         notificationBuilder?.setAutoCancel(false)
-        notificationBuilder?.setWhen(System.currentTimeMillis())
-        notificationBuilder?.setTimeoutAfter(
-            data.getLong(
-                CallkitConstants.EXTRA_CALLKIT_DURATION, 0L
-            )
-        )
+        notificationBuilder?.setWhen(startedAt)
+        notificationBuilder?.setTimeoutAfter(ringRemaining)
         notificationBuilder?.setOnlyAlertOnce(true)
         notificationBuilder?.setSound(null)
         notificationBuilder?.setFullScreenIntent(
@@ -218,7 +237,7 @@ class CallkitNotificationManager(
         if (isCustomNotification) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
 
-                val caller = data.getString(CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, "")
+                val caller = CallerDisplayNames.resolve(data)
                 val person = Person.Builder().setName(caller).setImportant(
                     data.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_IMPORTANT, true)
                 ).setBot(data.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_BOT, false)).build()
@@ -311,7 +330,7 @@ class CallkitNotificationManager(
                     targetInComingAvatarDefault
                 )
             }
-            val caller = data.getString(CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, "")
+            val caller = CallerDisplayNames.resolve(data)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 val person = Person.Builder().setName(caller).setImportant(
                     data.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_IMPORTANT, true)
@@ -351,7 +370,7 @@ class CallkitNotificationManager(
         notificationId: Int, remoteViews: RemoteViews, data: Bundle
     ) {
         remoteViews.setTextViewText(
-            R.id.tvNameCaller, data.getString(CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, "")
+            R.id.tvNameCaller, CallerDisplayNames.resolve(data)
         )
         val isShowCallID = data.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_SHOW_CALL_ID, false)
         if (isShowCallID) {
@@ -595,6 +614,11 @@ class CallkitNotificationManager(
 
         val onGoingNotificationId = ("ongoing_$callingId").hashCode()
 
+        // SnowChat fork (2026-11-23): remember what is on screen so
+        // refreshCallerName can redraw this notification with a new name.
+        shownOngoingData = data
+        shownOngoingConnected = isConnected
+
         notificationOngoingBuilder = NotificationCompat.Builder(
             context, NOTIFICATION_CHANNEL_ID_ONGOING
         )
@@ -630,7 +654,7 @@ class CallkitNotificationManager(
         if (isCustomNotification) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
 
-                val caller = data.getString(CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, "")
+                val caller = CallerDisplayNames.resolve(data)
                 val person = Person.Builder().setName(caller).setImportant(
                     data.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_IMPORTANT, true)
                 ).setBot(data.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_BOT, false)).build()
@@ -685,11 +709,11 @@ class CallkitNotificationManager(
 
                 notificationOngoingViews?.setTextViewText(
                     R.id.tvNameCaller,
-                    data.getString(CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, "")
+                    CallerDisplayNames.resolve(data)
                 )
                 notificationOngoingSmallViews?.setTextViewText(
                     R.id.tvNameCaller,
-                    data.getString(CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, "")
+                    CallerDisplayNames.resolve(data)
                 )
                 val isShowCallID =
                     data.getBoolean(CallkitConstants.EXTRA_CALLKIT_IS_SHOW_CALL_ID, false)
@@ -749,9 +773,7 @@ class CallkitNotificationManager(
             }
         } else {
             notificationOngoingBuilder?.setContentTitle(
-                data.getString(
-                    CallkitConstants.EXTRA_CALLKIT_NAME_CALLER, ""
-                )
+                CallerDisplayNames.resolve(data)
             )
             notificationOngoingBuilder?.setContentText(
                 data.getString(
@@ -801,7 +823,13 @@ class CallkitNotificationManager(
             Notification.PRIORITY_HIGH
         }
         if (isConnected == true) {
-            notificationOngoingBuilder?.setWhen(System.currentTimeMillis())
+            // SnowChat fork (2026-11-23): a redraw keeps the chronometer's start.
+            if (!data.containsKey(EXTRA_TIME_CONNECTED_CALL)) {
+                data.putLong(EXTRA_TIME_CONNECTED_CALL, System.currentTimeMillis())
+            }
+            notificationOngoingBuilder?.setWhen(
+                data.getLong(EXTRA_TIME_CONNECTED_CALL, System.currentTimeMillis())
+            )
             notificationOngoingBuilder?.setUsesChronometer(true)
         } else {
             notificationOngoingBuilder?.setUsesChronometer(false)
@@ -826,6 +854,10 @@ class CallkitNotificationManager(
 
     fun clearIncomingNotification(data: Bundle, isAccepted: Boolean) {
         callkitSoundPlayerManager?.stop()
+        val clearedId = data.getString(CallkitConstants.EXTRA_CALLKIT_ID, "")
+        if (shownIncomingData?.getString(CallkitConstants.EXTRA_CALLKIT_ID, "") == clearedId) {
+            shownIncomingData = null
+        }
 
         context.sendBroadcast(CallkitIncomingActivity.getIntentEnded(context, isAccepted))
         val notificationId =
@@ -993,6 +1025,7 @@ class CallkitNotificationManager(
     @SuppressLint("MissingPermission")
     fun showIncomingNotification(data: Bundle) {
         val callkitNotification = getIncomingNotification(data)
+        shownIncomingData = data
         if (incomingChannelEnabled()) {
             callkitSoundPlayerManager?.play(data)
         }
@@ -1011,6 +1044,54 @@ class CallkitNotificationManager(
                 callkitNotification.id, it.notification
             )
         }
+    }
+
+    /**
+     * SnowChat fork (2026-11-23) — redraw the notification of call [callId]
+     * (incoming while it rings, ongoing after it was answered) with the name
+     * the app gave it (CallerDisplayNames). Silent: no sound, no new alert
+     * (setOnlyAlertOnce), the ring timeout and the chronometer keep their
+     * start. Only a call still in the plugin's active call list is redrawn —
+     * a name that arrives after the call ended posts nothing.
+     */
+    @SuppressLint("MissingPermission")
+    fun refreshCallerName(callId: String) {
+        if (callId.isEmpty()) return
+        if (getDataActiveCalls(context).none { it.id == callId }) return
+        val incoming = shownIncomingData
+        if (incoming != null &&
+            incoming.getString(CallkitConstants.EXTRA_CALLKIT_ID, "") == callId
+        ) {
+            getIncomingNotification(incoming)?.let {
+                getNotificationManager().notify(it.id, it.notification)
+            }
+        }
+        val ongoing = shownOngoingData
+        if (ongoing != null &&
+            ongoing.getString(CallkitConstants.EXTRA_CALLKIT_ID, "") == callId
+        ) {
+            getOnGoingCallNotification(ongoing, shownOngoingConnected)?.let {
+                getNotificationManager().notify(it.id, it.notification)
+            }
+        }
+    }
+
+    /** SnowChat fork (2026-11-23) — stop tracking the notifications of an ended call. */
+    fun forgetCall(callId: String) {
+        if (shownIncomingData?.getString(CallkitConstants.EXTRA_CALLKIT_ID, "") == callId) {
+            shownIncomingData = null
+        }
+        if (shownOngoingData?.getString(CallkitConstants.EXTRA_CALLKIT_ID, "") == callId) {
+            shownOngoingData = null
+            shownOngoingConnected = null
+        }
+    }
+
+    /** SnowChat fork (2026-11-23) — stop tracking every call notification. */
+    fun forgetAllCalls() {
+        shownIncomingData = null
+        shownOngoingData = null
+        shownOngoingConnected = null
     }
 
 
